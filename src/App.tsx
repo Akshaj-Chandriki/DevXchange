@@ -32,9 +32,8 @@ import {
 } from 'lucide-react';
 import { 
   onAuthStateChanged, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  updateProfile, 
+  signInWithPopup, 
+  GoogleAuthProvider, 
   signOut 
 } from 'firebase/auth';
 import { 
@@ -61,10 +60,6 @@ export default function App() {
   const [user, setUser] = useState<{ name: string; email: string; photoURL: string } | null>(null);
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authEmail, setAuthEmail] = useState('');
-  const [authPassword, setAuthPassword] = useState('');
-  const [authDisplayName, setAuthDisplayName] = useState('');
-  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
   const [authError, setAuthError] = useState<string | null>(null);
 
   // Platform Metrics from database in real-time
@@ -280,46 +275,24 @@ export default function App() {
     }, 600);
   };
 
-  // Handle Auth submission using Email and Password
-  const handleAuthSubmit = async (e: FormEvent) => {
-    e.preventDefault();
+  // Handle Real Google Login Flow via Popup
+  const handleGoogleLogin = async () => {
     setAuthError(null);
     setIsSigningIn(true);
-
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({
+      prompt: 'select_account'
+    });
     try {
-      if (authMode === 'login') {
-        await signInWithEmailAndPassword(auth, authEmail, authPassword);
-      } else {
-        const userCredential = await createUserWithEmailAndPassword(auth, authEmail, authPassword);
-        const nickname = authDisplayName.trim() || authEmail.split('@')[0];
-        await updateProfile(userCredential.user, {
-          displayName: nickname,
-          photoURL: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=256&auto=format&fit=crop'
-        });
-        
-        setUser({
-          name: nickname,
-          email: userCredential.user.email || '',
-          photoURL: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=256&auto=format&fit=crop'
-        });
-      }
+      await signInWithPopup(auth, provider);
       setAuthModalOpen(false);
-      setAuthEmail('');
-      setAuthPassword('');
-      setAuthDisplayName('');
     } catch (err: any) {
-      console.error("Auth action failed: ", err);
-      let friendlyError = "Authentication failed. Please verify your credentials.";
-      if (err?.code === 'auth/wrong-password') {
-        friendlyError = "Incorrect password. Please try again.";
-      } else if (err?.code === 'auth/user-not-found' || err?.code === 'auth/invalid-credential') {
-        friendlyError = "Invalid email or password. Please verify your credentials or register.";
-      } else if (err?.code === 'auth/invalid-email') {
-        friendlyError = "Invalid email format. E.g. you@example.com";
-      } else if (err?.code === 'auth/email-already-in-use') {
-        friendlyError = "This email is already registered.";
-      } else if (err?.code === 'auth/weak-password') {
-        friendlyError = "Weak password. Please use at least 6 characters.";
+      console.error("Google Sign-In failed: ", err);
+      let friendlyError = "Google Authentication encountered an issue. Please try again.";
+      if (err?.code === 'auth/popup-blocked') {
+        friendlyError = "Popup Blocked: Please allow browser popups for this site to sign in via Google.";
+      } else if (err?.code === 'auth/cancelled-popup-request' || err?.code === 'auth/popup-closed-by-user') {
+        friendlyError = "Sign-In cancelled. Please complete the Google authorization window to login.";
       } else if (err?.message) {
         friendlyError = err.message;
       }
@@ -511,7 +484,6 @@ export default function App() {
             ) : (
               <button
                 onClick={() => {
-                  setAuthMode('login');
                   setAuthError(null);
                   setAuthModalOpen(true);
                 }}
@@ -559,7 +531,6 @@ export default function App() {
               ) : (
                 <button
                   onClick={() => {
-                    setAuthMode('login');
                     setAuthError(null);
                     setAuthModalOpen(true);
                   }}
@@ -1094,7 +1065,6 @@ export default function App() {
 
                     <button
                       onClick={() => {
-                        setAuthMode('login');
                         setAuthError(null);
                         setAuthModalOpen(true);
                       }}
@@ -1425,7 +1395,7 @@ export default function App() {
                   setAuthModalOpen(false);
                   setAuthError(null);
                 }}
-                className="absolute top-5 right-5 text-zinc-500 hover:text-zinc-300 disabled:opacity-50 transition-colors"
+                className="absolute top-5 right-5 text-zinc-500 hover:text-zinc-300 disabled:opacity-50 transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1436,12 +1406,10 @@ export default function App() {
                     <Lock className="w-5 h-5" />
                   </div>
                   <h3 className="text-2xl font-display font-black text-white">
-                    {authMode === 'login' ? 'Welcome Back' : 'Create Account'}
+                    Authorized Portal
                   </h3>
                   <p className="text-xs text-zinc-400 leading-normal">
-                    {authMode === 'login' 
-                      ? 'Sign in to access your project tickets & orders' 
-                      : 'Register to start submitting order tickets instantly'}
+                    Sign in via Google to automatically synchronize trade requirements, view live transaction queues, and open verified helper tickets.
                   </p>
                 </div>
 
@@ -1452,94 +1420,27 @@ export default function App() {
                   </div>
                 )}
 
-                <form onSubmit={handleAuthSubmit} className="space-y-4">
-                  {authMode === 'signup' && (
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-zinc-400">Your Nickname *</label>
-                      <input
-                        type="text"
-                        required
-                        disabled={isSigningIn}
-                        placeholder="e.g. shin_chan"
-                        value={authDisplayName}
-                        onChange={(e) => setAuthDisplayName(e.target.value)}
-                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400 transition-all font-sans disabled:opacity-50"
-                      />
-                    </div>
-                  )}
-
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-zinc-400">Email Address *</label>
-                    <input
-                      type="email"
-                      required
-                      disabled={isSigningIn}
-                      placeholder="you@example.com"
-                      value={authEmail}
-                      onChange={(e) => setAuthEmail(e.target.value)}
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400 transition-all font-sans disabled:opacity-50"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-zinc-400">Password *</label>
-                    <input
-                      type="password"
-                      required
-                      disabled={isSigningIn}
-                      placeholder="••••••••"
-                      value={authPassword}
-                      onChange={(e) => setAuthPassword(e.target.value)}
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-1 focus:ring-yellow-400 transition-all font-sans disabled:opacity-50"
-                    />
-                  </div>
-
+                <div className="space-y-4">
                   <button
-                    type="submit"
+                    onClick={handleGoogleLogin}
                     disabled={isSigningIn}
-                    className="w-full py-3.5 bg-yellow-400 hover:bg-yellow-300 disabled:opacity-50 disabled:bg-zinc-800 text-black font-display font-extrabold text-sm rounded-xl transition-all shadow-glow-yellow flex items-center justify-center space-x-2 cursor-pointer"
+                    className="w-full py-3.5 bg-white hover:bg-zinc-100 disabled:opacity-50 disabled:bg-zinc-800 text-black font-semibold text-sm rounded-xl transition-all flex items-center justify-center space-x-3 cursor-pointer shadow-md"
                   >
                     {isSigningIn ? (
-                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <RefreshCw className="w-4 h-4 animate-spin text-zinc-600" />
                     ) : (
-                      <Check className="w-4 h-4" />
+                      <svg className="w-4 h-4" viewBox="0 0 24 24">
+                        <path fill="#4285F4" d="M23.75 12.27c0-.83-.07-1.64-.2-2.42H12v4.58h6.61c-.29 1.5-.1.3-1.12 2.18v3.63h3.5c2.05-1.89 3.23-4.67 3.23-7.97z"/>
+                        <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.5-3.63c-.98.66-2.23 1.05-4.43 1.05-3.41 0-6.3-2.3-7.33-5.39H1.1v3.74C3.07 20.3 7.15 24 12 24z"/>
+                        <path fill="#FBBC05" d="M4.67 13.12c-.26-.77-.4-1.6-.4-2.45s.14-1.68.4-2.45V4.48H1.1a12.02 12.02 0 0 0 0 10.38z"/>
+                        <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.93 1.19 15.24 0 12 0 7.15 0 3.07 3.7 1.1 8.22l3.57 3.51c1.03-3.1 3.92-5.41 7.33-5.41z"/>
+                      </svg>
                     )}
-                    <span>{authMode === 'login' ? 'Sign In Now' : 'Sign Up Now'}</span>
+                    <span>{isSigningIn ? 'Connecting Securely...' : 'Sign In with Google'}</span>
                   </button>
-                </form>
-
-                <div className="text-center text-xs text-zinc-500 pt-2 border-t border-zinc-900 leading-normal">
-                  {authMode === 'login' ? (
-                    <p>
-                      Don't have an account?{' '}
-                      <button
-                        type="button"
-                        disabled={isSigningIn}
-                        onClick={() => {
-                          setAuthMode('signup');
-                          setAuthError(null);
-                        }}
-                        className="text-yellow-400 hover:underline font-bold focus:outline-none cursor-pointer"
-                      >
-                        Sign Up
-                      </button>
-                    </p>
-                  ) : (
-                    <p>
-                      Already have an account?{' '}
-                      <button
-                        type="button"
-                        disabled={isSigningIn}
-                        onClick={() => {
-                          setAuthMode('login');
-                          setAuthError(null);
-                        }}
-                        className="text-yellow-400 hover:underline font-bold focus:outline-none cursor-pointer"
-                      >
-                        Sign In
-                      </button>
-                    </p>
-                  )}
+                  <p className="text-[10px] text-zinc-500 text-center leading-relaxed max-w-[240px] mx-auto">
+                    By signing in, your account is immediately verified with the secure Firebase Authentication platform.
+                  </p>
                 </div>
               </div>
             </motion.div>
