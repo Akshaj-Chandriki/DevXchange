@@ -1,0 +1,129 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default catch-all deny rule (Global Safety Net)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- GLOBAL HELPERS & PRIMITIVES ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- ENTITY-SPECIFIC VALIDATOR FOR TICKET ---
+    function isValidTicket(data) {
+      return (
+        data.discordUsername is string && data.discordUsername.size() > 0 && data.discordUsername.size() <= 100 &&
+        data.projectType is string && data.projectType.size() > 0 && data.projectType.size() <= 150 &&
+        data.projectDetails is string && data.projectDetails.size() > 0 && data.projectDetails.size() <= 5000 &&
+        data.status is string && data.status in ['open', 'in-progress', 'completed', 'cancelled'] &&
+        data.userId is string && data.userId == request.auth.uid &&
+        data.email is string && data.email == request.auth.token.email &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp &&
+        // Secure optional field guards:
+        (!('urgency' in data) || (data.urgency is string && data.urgency.size() <= 50)) &&
+        (!('paymentMethod' in data) || (data.paymentMethod is string && data.paymentMethod.size() <= 50)) &&
+        // Enforce strict keys:
+        data.keys().hasAll(['discordUsername', 'projectType', 'projectDetails', 'status', 'userId', 'email', 'createdAt', 'updatedAt']) &&
+        data.keys().size() >= 8 && data.keys().size() <= 10
+      );
+    }
+
+    // --- ENTITY-SPECIFIC VALIDATOR FOR RATINGS ---
+    function isValidReview(data) {
+      return (
+        data.ticketId is string && data.ticketId.size() > 0 && data.ticketId.size() <= 128 &&
+        data.userId is string && data.userId == request.auth.uid &&
+        data.userName is string && data.userName.size() > 0 && data.userName.size() <= 150 &&
+        data.userPhoto is string && data.userPhoto.size() > 0 && data.userPhoto.size() <= 600 &&
+        data.rating is int && data.rating >= 1 && data.rating <= 5 &&
+        data.feedback is string && data.feedback.size() >= 0 && data.feedback.size() <= 1000 &&
+        data.projectType is string && data.projectType.size() > 0 && data.projectType.size() <= 150 &&
+        data.createdAt is timestamp &&
+        data.keys().hasAll(['ticketId', 'userId', 'userName', 'userPhoto', 'rating', 'feedback', 'projectType', 'createdAt']) &&
+        data.keys().size() == 8
+      );
+    }
+
+    // Rules for Tickets collection
+    match /tickets/{ticketId} {
+      allow get: if isSignedIn() && (existing().userId == request.auth.uid);
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid);
+
+      allow create: if (
+        isEmailVerified() &&
+        isValidId(ticketId) &&
+        isValidTicket(incoming()) &&
+        incoming().status == 'open' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time
+      );
+
+      allow update: if (
+        isEmailVerified() &&
+        isValidId(ticketId) &&
+        isValidTicket(incoming()) &&
+        existing().userId == request.auth.uid &&
+        
+        // Identity & History invariants:
+        incoming().userId == existing().userId &&
+        incoming().email == existing().email &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+
+        // Action states checks & status constraints
+        existing().status != 'completed' &&
+        (
+          // Action: Cancel
+          (incoming().status == 'cancelled' && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])) ||
+          // Action: Complete
+          (incoming().status == 'completed' && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])) ||
+          // Action: Recenter Ticket Details or specs
+          (incoming().status == existing().status && incoming().diff(existing()).affectedKeys().hasAny(['projectDetails', 'discordUsername', 'projectType', 'urgency', 'paymentMethod', 'updatedAt']))
+        )
+      );
+
+      allow delete: if false; // Deletion is disabled to maintain immutable audit records
+    }
+
+    // Rules for Ratings collection
+    match /ratings/{ratingId} {
+      allow get, list: if true; // Public listings
+
+      allow create: if (
+        isEmailVerified() &&
+        isValidId(ratingId) &&
+        isValidReview(incoming()) &&
+        incoming().createdAt == request.time
+      );
+
+      allow update, delete: if false; // Reviews are immutable
+    }
+
+    // Rules for platform Stats collection
+    match /stats/{statsId} {
+      allow get, list: if true; // Publicly readable stats
+
+      allow write: if false; // Read-only from the client SDK, fully manageable via Firebase Console
+    }
+  }
+}
